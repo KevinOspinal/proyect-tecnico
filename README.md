@@ -85,13 +85,36 @@ El seed carga:
 - **350 interacciones** distribuidas entre llamadas y tickets, en distintos estados
 - **~140 interacciones nocturnas** (entre las 19:00 y las 23:59 hora Cali) para verificar que el agrupamiento por día respeta UTC-5 y no UTC
 
+### Requisito previo
+
+Las migraciones deben aplicarse **antes** de correr el seed, ya que el seed lee los estados (`abierto`, `proceso`, `finalizado`) directamente desde la tabla `states` que crean las migraciones:
+
+```bash
+npm run prisma:migrate   # primero
+npm run prisma:seed      # después
+```
+
+### Uso local
+
+```bash
+npm run prisma:seed
+```
+
+### Uso con base de datos remota
+
+Actualiza `DATABASE_URL` en `.env` con la cadena de conexión de tu base de datos remota antes de ejecutar el seed:
+
+```env
+DATABASE_URL="postgresql://usuario:contraseña@host-remoto:5432/nombre_bd"
+```
+
+Luego corre el seed normalmente:
+
 ```bash
 npm run prisma:seed
 ```
 
 > El seed es **idempotente**: elimina los datos existentes antes de insertar, por lo que puede correrse varias veces sin duplicados.
-
-> **Nota:** el seed está configurado para desarrollo local. Para correrlo contra una base de datos remota, actualiza `DATABASE_URL` en el archivo `.env` con la cadena de conexión correspondiente antes de ejecutarlo.
 
 ---
 
