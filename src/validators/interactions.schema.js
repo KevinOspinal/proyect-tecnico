@@ -27,9 +27,9 @@ export const crearInteraccionSchema = z.object({
 
 // ─── Schema: cambiar estado ───────────────────────────────────────────────────
 export const cambiarEstadoSchema = z.object({
-  status: z.enum(['abierta', 'en_progreso', 'resuelta'], {
+  status: z.enum(['abierto', 'proceso', 'finalizado'], {
     errorMap: () => ({
-      message: 'status debe ser "abierta", "en_progreso" o "resuelta".',
+      message: 'status debe ser "abierto", "proceso" o "finalizado".',
     }),
   }),
 });
@@ -38,7 +38,7 @@ export const cambiarEstadoSchema = z.object({
 export const listarSchema = z
   .object({
     agentId: z.string().uuid('agentId debe ser un UUID válido.').optional(),
-    status: z.enum(['abierta', 'en_progreso', 'resuelta']).optional(),
+    status: z.enum(['abierto', 'proceso', 'finalizado']).optional(),
     from: isoFecha.optional(),
     to: isoFecha.optional(),
     // Los query params llegan como strings; z.coerce los convierte a número

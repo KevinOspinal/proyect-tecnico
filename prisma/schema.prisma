@@ -7,19 +7,20 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-// ─── Enums ────────────────────────────────────────────────────────────────────
-// Se definen a nivel de base de datos para que Postgres rechace valores inválidos
-// en la capa de almacenamiento, no solo en la capa de aplicación.
-
 enum InteractionType {
   llamada
   ticket
 }
 
-enum InteractionStatus {
-  abierta
-  en_progreso
-  resuelta
+// ─── State ────────────────────────────────────────────────────────────────────
+
+model State {
+  id   Int    @id @default(autoincrement())
+  name String @unique
+
+  interactions Interaction[]
+
+  @@map("states")
 }
 
 // ─── Agent ────────────────────────────────────────────────────────────────────
@@ -38,28 +39,23 @@ model Agent {
 // ─── Interaction ──────────────────────────────────────────────────────────────
 
 model Interaction {
-  id      String            @id @default(uuid())
-  agentId String            @map("agent_id")
+  id      String          @id @default(uuid())
+  agentId String          @map("agent_id")
   type    InteractionType
-  status  InteractionStatus @default(abierta)
+  stateId Int             @map("state_id")
 
-  // openedAt: cuándo el agente abrió la interacción (puede ser distinto a createdAt)
-  // @db.Timestamptz → columna timestamptz en Postgres para que AT TIME ZONE funcione correctamente
-  openedAt DateTime  @default(now()) @map("opened_at") @db.Timestamptz(6)
-  // closedAt: nullable — solo se estampa cuando status pasa a 'resuelta'
-  closedAt DateTime? @map("closed_at")                 @db.Timestamptz(6)
+  openedAt     DateTime  @default(now()) @map("opened_at")     @db.Timestamptz(6)
+  inProgressAt DateTime?               @map("in_progress_at") @db.Timestamptz(6)
+  closedAt     DateTime?               @map("closed_at")      @db.Timestamptz(6)
 
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt DateTime @updatedAt       @map("updated_at") @db.Timestamptz(6)
 
   agent Agent @relation(fields: [agentId], references: [id])
+  state State @relation(fields: [stateId], references: [id])
 
-  // Índice compuesto: cubre la consulta de métricas más frecuente
-  // (agent_id = $1 AND status = $2) y también filtra solo por agentId (prefijo izquierdo)
-  @@index([agentId, status])
-
-  // Índices sueltos para consultas globales sin filtro de agente
-  @@index([status])
+  @@index([agentId, stateId])
+  @@index([stateId])
   @@index([openedAt])
 
   @@map("interactions")
