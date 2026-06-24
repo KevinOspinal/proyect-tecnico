@@ -2,6 +2,7 @@ import express from 'express';
 import cors from 'cors';
 import apiRouter from './routes/index.js';
 import { errorHandler } from './middlewares/errorHandler.js';
+import { NotFoundError } from './domain/errors.js';
 
 const app = express();
 
@@ -16,6 +17,9 @@ app.get('/health', (_req, res) => res.json({ status: 'ok' }));
 
 // Todas las rutas del negocio bajo /api
 app.use('/api', apiRouter);
+
+// Captura rutas no registradas antes del errorHandler
+app.use((req, _res, next) => next(new NotFoundError(`Ruta "${req.method} ${req.path}" no encontrada.`)));
 
 // El errorHandler SIEMPRE va al final; Express lo identifica por tener 4 parámetros
 app.use(errorHandler);

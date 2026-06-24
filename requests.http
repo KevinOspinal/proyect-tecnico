@@ -1,0 +1,214 @@
+# Engage 360 API — Ejemplos de peticiones
+# Compatible con la extensión REST Client de VS Code (Ctrl+Alt+R para ejecutar)
+# También sirve como referencia para curl equivalente.
+
+@base = http://localhost:3000
+@agentId = 14b006b1-1feb-41e0-887e-c66402acf9e2
+
+# ─── Salud ────────────────────────────────────────────────────────────────────
+
+### Health check
+GET {{base}}/health
+
+
+# ─── Interacciones ────────────────────────────────────────────────────────────
+
+### 1. Crear interacción (tipo llamada, openedAt automático)
+# Esperado: 201 con status "abierta"
+POST {{base}}/api/interactions
+Content-Type: application/json
+
+{
+  "agentId": "{{agentId}}",
+  "type": "llamada"
+}
+
+###
+
+### 2. Crear interacción (tipo ticket, openedAt explícito)
+# openedAt a las 22:30 hora Cali (= 03:30 UTC del día siguiente)
+# Esperado: 201 — en métricas aparecerá en el día Cali, no en el UTC
+POST {{base}}/api/interactions
+Content-Type: application/json
+
+{
+  "agentId": "{{agentId}}",
+  "type": "ticket",
+  "openedAt": "2026-06-23T22:30:00-05:00"
+}
+
+###
+
+### 3. Crear interacción — agentId inválido (no es UUID)
+# Esperado: 400 ValidationError con details
+POST {{base}}/api/interactions
+Content-Type: application/json
+
+{
+  "agentId": "no-es-uuid",
+  "type": "llamada"
+}
+
+###
+
+### 4. Crear interacción — tipo inválido
+# Esperado: 400 ValidationError
+POST {{base}}/api/interactions
+Content-Type: application/json
+
+{
+  "agentId": "{{agentId}}",
+  "type": "fax"
+}
+
+###
+
+### 5. Crear interacción — agente inexistente
+# Esperado: 404 NotFoundError
+POST {{base}}/api/interactions
+Content-Type: application/json
+
+{
+  "agentId": "00000000-0000-0000-0000-000000000000",
+  "type": "llamada"
+}
+
+###
+
+# Reemplaza este valor con el id devuelto por la petición 1 o 2
+@interactionId = PEGA-AQUI-EL-ID-DE-LA-INTERACCION
+
+### 6. Transición válida: abierta → en_progreso
+# Esperado: 200 con status "en_progreso"
+PATCH {{base}}/api/interactions/{{interactionId}}/estado
+Content-Type: application/json
+
+{
+  "status": "en_progreso"
+}
+
+###
+
+### 7. Transición válida: en_progreso → resuelta
+# Esperado: 200 con closedAt estampado por el servidor
+PATCH {{base}}/api/interactions/{{interactionId}}/estado
+Content-Type: application/json
+
+{
+  "status": "resuelta"
+}
+
+###
+
+### 8. Transición inválida: resuelta → abierta (estado terminal)
+# Esperado: 409 ConflictError
+PATCH {{base}}/api/interactions/{{interactionId}}/estado
+Content-Type: application/json
+
+{
+  "status": "abierta"
+}
+
+###
+
+### 9. Transición con UUID inválido en params
+# Esperado: 400 ValidationError
+PATCH {{base}}/api/interactions/no-es-uuid/estado
+Content-Type: application/json
+
+{
+  "status": "en_progreso"
+}
+
+###
+
+### 10. Transición con interacción inexistente
+# Esperado: 404 NotFoundError
+PATCH {{base}}/api/interactions/00000000-0000-0000-0000-000000000000/estado
+Content-Type: application/json
+
+{
+  "status": "en_progreso"
+}
+
+###
+
+### 11. Listar interacciones — sin filtros (página 1, tamaño 20)
+GET {{base}}/api/interactions
+
+###
+
+### 12. Listar — filtro por status
+GET {{base}}/api/interactions?status=resuelta
+
+###
+
+### 13. Listar — filtro por agente
+GET {{base}}/api/interactions?agentId={{agentId}}
+
+###
+
+### 14. Listar — filtro por rango de fechas
+GET {{base}}/api/interactions?from=2026-06-01T00:00:00Z&to=2026-06-23T23:59:59Z
+
+###
+
+### 15. Listar — paginación explícita (página 2, 5 resultados por página)
+GET {{base}}/api/interactions?page=2&pageSize=5
+
+###
+
+### 16. Listar — filtros combinados
+GET {{base}}/api/interactions?agentId={{agentId}}&status=en_progreso&page=1&pageSize=10
+
+###
+
+### 17. Listar — pageSize fuera de rango (> 100)
+# Esperado: 400 ValidationError
+GET {{base}}/api/interactions?pageSize=999
+
+###
+
+### 18. Listar — from > to
+# Esperado: 400 ValidationError
+GET {{base}}/api/interactions?from=2026-06-23T00:00:00Z&to=2026-05-01T00:00:00Z
+
+###
+
+
+# ─── Métricas ─────────────────────────────────────────────────────────────────
+
+### 19. Métricas — rango completo del seed (30 días)
+# El rango cubre las ~140 interacciones nocturnas del seed.
+# Verificar: el volumenPorDia agrupa las interacciones de 19-23h Cali
+# al día local correcto, NO al día UTC siguiente.
+GET {{base}}/api/metrics?from=2026-05-25T00:00:00Z&to=2026-06-24T23:59:59Z
+
+###
+
+### 20. Métricas — rango con offset UTC-5 explícito (equivalente a petición 19)
+# from=2026-05-24T19:00:00-05:00 es lo mismo que 2026-05-25T00:00:00Z
+GET {{base}}/api/metrics?from=2026-05-24T19:00:00-05:00&to=2026-06-24T18:59:59-05:00
+
+###
+
+### 21. Métricas — sin parámetros obligatorios
+# Esperado: 400 ValidationError con details para "from" y "to"
+GET {{base}}/api/metrics
+
+###
+
+### 22. Métricas — from > to
+# Esperado: 400 ValidationError
+GET {{base}}/api/metrics?from=2026-06-23T00:00:00Z&to=2026-05-01T00:00:00Z
+
+###
+
+
+# ─── Rutas inexistentes ───────────────────────────────────────────────────────
+
+### 23. Ruta no registrada
+# Esperado: 404 NotFoundError con formato { error, message }
+GET {{base}}/api/noexiste
+
+###

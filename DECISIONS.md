@@ -56,7 +56,17 @@ Registro de decisiones arquitectónicas por fase.
 
 ---
 
-### 8. `closedAt` nullable
+### 8. UUID como tipo de ID en vez de entero autoincremental
+**Elegido:** `String @id @default(uuid())` en todos los modelos.  
+**Descartado:** `Int @id @default(autoincrement())`.  
+**Por qué:**
+- **Sin colisiones entre sistemas:** un entero autoincremental es único solo dentro de una tabla. Si el sistema crece a múltiples instancias o se fusionan bases de datos, los IDs numéricos chocan. Un UUID es globalmente único — dos servidores lo pueden generar de forma independiente sin coordinarse.
+- **No expone métricas internas:** con IDs numéricos, el ID `1042` revela que existen al menos 1042 registros. Con UUID esa información queda oculta al cliente.
+- **Generación en el cliente:** un servicio externo puede construir el ID antes del `POST`, lo que simplifica flujos optimistas y facilita la integración con otros sistemas.
+
+---
+
+### 9. `closedAt` nullable
 **Elegido:** `DateTime?` (nullable) — solo se estampa cuando `status` pasa a `resuelta`.  
 **Descartado:** `DateTime` con un valor centinela (ej. `9999-12-31`) para indicar "aún abierta".  
 **Por qué:** `NULL` no es un valor vacío aquí; es información semántica: "esta interacción aún no ha cerrado". La condición `closed_at IS NOT NULL` filtra resueltas sin joins ni comparaciones de fechas artificiales. Un valor centinela contamina agregaciones (AVG de tiempos de resolución incluiría registros abiertos) y requiere que toda la lógica conozca el centinela.
@@ -211,3 +221,45 @@ Registro de decisiones arquitectónicas por fase.
 **Elegido:** `timestamptz` (timestamp with time zone) vía `@db.Timestamptz(6)` en Prisma.  
 **Descartado:** El default de Prisma (`timestamp(3) without time zone`).  
 **Por qué:** La operación es en Colombia (UTC-5). El agrupamiento por día usa `opened_at AT TIME ZONE 'America/Bogota'`. Con `timestamp without time zone`, el operador `AT TIME ZONE` interpreta el valor como si estuviera en la zona horaria indicada (Bogotá) y lo convierte a UTC — exactamente lo contrario de lo que queremos. Con `timestamptz`, interpreta el valor como UTC y lo convierte a Bogotá — correcto. Si se usara el default de Prisma, una interacción abierta a las 8 p.m. en Cali podría contarse en el día siguiente.
+
+---
+
+## FASE 9 — Verificación end-to-end
+
+### 19. Handler de rutas no registradas como `NotFoundError`
+**Elegido:** Middleware catch-all entre las rutas y el `errorHandler` que lanza `NotFoundError`.  
+**Descartado:** Dejar que Express devuelva su respuesta HTML por defecto para rutas inexistentes.  
+**Por qué:** El cliente del API espera siempre `{ error, message }` en JSON. La respuesta HTML de Express rompe ese contrato. Al pasar el error al `errorHandler` central, la respuesta es consistente con todos los demás errores de la aplicación.
+
+---
+
+## Trazabilidad de fases
+
+| Fase | Qué se construyó | Archivo(s) clave |
+|------|-----------------|------------------|
+| 1 | Scaffolding del proyecto | `src/app.js`, `src/server.js`, `src/config/env.js`, `src/config/prisma.js` |
+| 2 | Modelos Prisma + migraciones + repositorios | `prisma/schema.prisma`, `src/repositories/agents.repository.js`, `src/repositories/interactions.repository.js` |
+| 3 | Capa de dominio | `src/domain/errors.js`, `src/domain/interactionStatus.js` |
+| 4 | Tests de dominio | `tests/interactionStatus.test.js` |
+| 5 | Capa de servicios | `src/services/interactions.service.js`, `src/services/metrics.service.js` |
+| 6 | Validación con Zod + errorHandler | `src/validators/interactions.schema.js`, `src/validators/metrics.schema.js`, `src/middlewares/validate.js`, `src/middlewares/errorHandler.js` |
+| 7 | Controllers y rutas | `src/controllers/`, `src/routes/`, `src/utils/asyncHandler.js` |
+| 8 | Seed de datos | `prisma/seed.js` — 350 interacciones, 140 nocturnas (UTC-5) |
+| 9 | Verificación end-to-end + documentación | `requests.http`, `README.md`, `DECISIONS.md` |
+
+### Invariantes verificados en la Fase 9
+
+**Caminos felices (200/201):**
+- `POST /api/interactions` crea con `status: "abierta"` y `openedAt` server-side si no se provee.
+- `PATCH /:id/estado` acepta `abierta → en_progreso`, `abierta → resuelta`, `en_progreso → resuelta`.
+- Al pasar a `resuelta`, `closedAt` es estampado por el servidor (no el cliente).
+- `GET /api/interactions` devuelve `{ data, page, pageSize, total }` con todos los filtros funcionales.
+- `GET /api/metrics` devuelve `porAgente` y `volumenPorDia` con agrupamiento correcto en hora Cali.
+
+**Caso crítico UTC-5 verificado:**
+Una interacción abierta a las `22:44 hora Cali` se almacena como `03:44 UTC` del día siguiente. La query `date_trunc('day', opened_at AT TIME ZONE 'America/Bogota')` la agrupa al día `2026-05-25` (Cali), no al `2026-05-26` (UTC). Este comportamiento fue validado contra datos reales del seed.
+
+**Caminos de error (formato `{ error, message, details? }`):**
+- `400 ValidationError` — body/query/params con tipos o valores inválidos (con `details`).
+- `404 NotFoundError` — agente o interacción inexistente, ruta no registrada.
+- `409 ConflictError` — transición de estado no permitida (sin `details`).
