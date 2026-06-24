@@ -91,6 +91,8 @@ npm run prisma:seed
 
 > El seed es **idempotente**: elimina los datos existentes antes de insertar, por lo que puede correrse varias veces sin duplicados.
 
+> **Nota:** el seed está configurado para desarrollo local. Para correrlo contra una base de datos remota, actualiza `DATABASE_URL` en el archivo `.env` con la cadena de conexión correspondiente antes de ejecutarlo.
+
 ---
 
 ## Endpoints
