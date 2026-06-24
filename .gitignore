@@ -1,0 +1,10 @@
+node_modules/
+.env
+.env.local
+
+# Prisma generated client (regenerated on install)
+node_modules/.prisma/
+
+# OS / editor files
+.DS_Store
+*.log
