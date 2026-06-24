@@ -27,21 +27,24 @@ function randomItem(arr) {
  * Crea un Date en UTC que representa la hora `hourCali:minuteCali` en Colombia (UTC-5).
  * Colombia no usa horario de verano, siempre es UTC-5.
  *
- * CASO DE MEDIANOCHE (ver comentario en el bucle de generación):
- * Si hourCali >= 19, la conversión a UTC produce una hora >= 24:00,
+ * CASO DE MEDIANOCHE: si hourCali >= 19, la conversión a UTC produce una hora >= 24:00,
  * lo que JavaScript traduce automáticamente al día siguiente.
  * Ejemplo: 22:00 Cali + 5h = 27:00 UTC → 03:00 UTC del día siguiente.
  */
 function makeCaliTime(baseDate, hourCali, minuteCali = 0) {
   const d = new Date(baseDate);
-  d.setUTCHours(0, 0, 0, 0); // normalizar a medianoche UTC
-  d.setUTCHours(hourCali + 5, minuteCali, 0, 0); // JS ajusta la fecha automáticamente si >= 24h
+  d.setUTCHours(0, 0, 0, 0);
+  d.setUTCHours(hourCali + 5, minuteCali, 0, 0);
   return d;
 }
 
 // ─── Generación de interacciones ──────────────────────────────────────────────
 
-function generarInteracciones(agentes) {
+function generarInteracciones(agentes, estados) {
+  const idAbierto    = estados.find((s) => s.name === 'abierto').id;
+  const idProceso    = estados.find((s) => s.name === 'proceso').id;
+  const idFinalizado = estados.find((s) => s.name === 'finalizado').id;
+
   const interacciones = [];
 
   const hoy = new Date();
@@ -52,7 +55,6 @@ function generarInteracciones(agentes) {
     const agente = randomItem(agentes);
     const tipo = randomItem(['llamada', 'ticket']);
 
-    // Día aleatorio dentro del rango de 30 días
     const fechaBase = new Date(hace30Dias);
     fechaBase.setDate(hace30Dias.getDate() + randomInt(0, 29));
 
@@ -66,37 +68,36 @@ function generarInteracciones(agentes) {
      *
      * Propósito: verificar que la query de métricas agrupa estas interacciones
      * en el día Cali correcto (día D) y no en el día UTC (día D+1).
-     * Si la query usara date_trunc sobre UTC sin conversión, estas ~140
-     * interacciones quedarían asignadas al día equivocado y los totales no cuadrarían.
      */
     if (i % 10 < 4) {
       openedAt = makeCaliTime(fechaBase, randomInt(19, 23), randomInt(0, 59));
     } else {
-      // Horario de oficina normal en Cali (6 a.m. – 6 p.m.)
       openedAt = makeCaliTime(fechaBase, randomInt(6, 18), randomInt(0, 59));
     }
 
-    // Distribución de estados: 60% resuelta, 20% en_progreso, 20% abierta
+    // Distribución: 60% finalizado, 20% proceso, 20% abierto
     const rand = Math.random();
-    let status, closedAt;
+    let stateId, inProgressAt, closedAt;
 
     if (rand < 0.6) {
-      status = 'resuelta';
-      // Duración realista: llamadas 5–45 min, tickets 30 min – 4 horas
+      stateId = idFinalizado;
       const duracionMs =
         tipo === 'llamada'
           ? randomInt(5, 45) * 60 * 1000
           : randomInt(30, 240) * 60 * 1000;
-      closedAt = new Date(openedAt.getTime() + duracionMs);
+      inProgressAt = new Date(openedAt.getTime() + randomInt(1, 3) * 60 * 1000);
+      closedAt     = new Date(openedAt.getTime() + duracionMs);
     } else if (rand < 0.8) {
-      status = 'en_progreso';
-      closedAt = null;
+      stateId      = idProceso;
+      inProgressAt = new Date(openedAt.getTime() + randomInt(1, 5) * 60 * 1000);
+      closedAt     = null;
     } else {
-      status = 'abierta';
-      closedAt = null;
+      stateId      = idAbierto;
+      inProgressAt = null;
+      closedAt     = null;
     }
 
-    interacciones.push({ agentId: agente.id, type: tipo, status, openedAt, closedAt });
+    interacciones.push({ agentId: agente.id, type: tipo, stateId, openedAt, inProgressAt, closedAt });
   }
 
   return interacciones;
@@ -106,7 +107,6 @@ function generarInteracciones(agentes) {
 
 async function main() {
   console.log('Limpiando datos existentes...');
-  // El orden importa: interactions referencia agents por FK
   await prisma.interaction.deleteMany();
   await prisma.agent.deleteMany();
 
@@ -115,23 +115,27 @@ async function main() {
     AGENTES_DATA.map((a) => prisma.agent.create({ data: a }))
   );
 
-  console.log('Generando interacciones...');
-  const interacciones = generarInteracciones(agentes);
+  console.log('Cargando estados desde la BD...');
+  const estados = await prisma.state.findMany();
 
-  // createMany inserta en un solo round-trip a la BD
+  console.log('Generando interacciones...');
+  const interacciones = generarInteracciones(agentes, estados);
+
   await prisma.interaction.createMany({ data: interacciones });
 
-  // ── Resumen ──
-  const resueltas    = interacciones.filter((i) => i.status === 'resuelta').length;
-  const enProgreso   = interacciones.filter((i) => i.status === 'en_progreso').length;
-  const abiertas     = interacciones.filter((i) => i.status === 'abierta').length;
-  // Interacciones nocturnas: las que en UTC caen entre 00:00 y 04:59 (= 19:00-23:59 Cali)
-  const nocturnas    = interacciones.filter((i) => i.openedAt.getUTCHours() < 5).length;
+  const idFinalizado = estados.find((s) => s.name === 'finalizado').id;
+  const idProceso    = estados.find((s) => s.name === 'proceso').id;
+  const idAbierto    = estados.find((s) => s.name === 'abierto').id;
+
+  const finalizadas = interacciones.filter((i) => i.stateId === idFinalizado).length;
+  const enProceso   = interacciones.filter((i) => i.stateId === idProceso).length;
+  const abiertas    = interacciones.filter((i) => i.stateId === idAbierto).length;
+  const nocturnas   = interacciones.filter((i) => i.openedAt.getUTCHours() < 5).length;
 
   console.log(`\n Agentes creados   : ${agentes.length}`);
   console.log(` Interacciones     : ${interacciones.length}`);
-  console.log(`   → resueltas     : ${resueltas}`);
-  console.log(`   → en progreso   : ${enProgreso}`);
+  console.log(`   → finalizadas   : ${finalizadas}`);
+  console.log(`   → en proceso    : ${enProceso}`);
   console.log(`   → abiertas      : ${abiertas}`);
   console.log(`   → nocturnas Cali (19-23h → 00-04h UTC): ${nocturnas}`);
 }
